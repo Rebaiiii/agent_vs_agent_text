@@ -119,7 +119,7 @@ Visible same-room events include object searches, item finds, failed searches, o
 - `env.py`: The `AgentVsAgentEnv` game environment and action definitions.
 - `agents.py`: `RandomAgent`, `RuleAgent`, and API-ready `LLMAgent`.
 - `llm_client.py`: Minimal OpenAI-compatible chat client using only the standard library.
-- `main.py`: Runs one visible match with `LLMAgent` as white and `RuleAgent` as black.
+- `main.py`: Runs one visible match.
 - `evaluate.py`: Runs batches of games and prints win/draw statistics.
 - `README.md`: Project overview and usage notes.
 
