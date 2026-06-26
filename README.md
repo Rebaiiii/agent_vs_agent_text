@@ -2,7 +2,7 @@
 
 A small simultaneous-step text/grid game where two agents compete on a 5x5 grid of rooms to collect hidden items, avoid object and door traps, and escape first.
 
-The current version is intentionally simple and deterministic except for agent choices.
+The current version is simple and deterministic except for agent choices. It does not include a learning process yet.
 
 ## Game Rules
 
@@ -27,15 +27,15 @@ The current version is intentionally simple and deterministic except for agent c
 - Both agents choose actions at the same time. The environment resolves those actions in deterministic white-then-black order inside the same timestep.
 - Each simultaneous step costs 1 timestep.
 - The first agent to collect all items and use `use_exit_door` in the exit room wins.
-- If 500 turns pass with no winner, the game is a draw by default.
+- If 500 steps pass with no winner, the game is a draw by default.
 - Rewards include a default step penalty so agents prefer efficient play.
 
 ## Actions
 
-- `up`
-- `down`
-- `left`
-- `right`
+- `up` - move to the upper room `(x, y - 1)`
+- `down` - move to the lower room `(x, y + 1)`
+- `left` - move to the left room `(x - 1, y)`
+- `right` - move to the right room `(x + 1, y)`
 - `use_exit_door` in the exit room
 - Object search actions generated from the current room, such as `search_desk` or `search_safe`
 - Object trap actions generated from the current room, such as `trap_cabinet` or `trap_locker`
@@ -110,7 +110,7 @@ When an agent triggers a trap or is shot, that agent drops all inventory in the 
 
 ## Same-Room Observability
 
-When both agents are in the same room, the non-acting agent can observe public parts of the acting agent's action. Observed events are delivered through `recent_observed_events` and then cleared from that agent's inbox.
+When both agents are in the same room, each agent can observe public parts of the other agent's action. Observed events are delivered through `recent_observed_events` and then cleared from that agent's inbox.
 
 Visible same-room events include object searches, item finds, failed searches, object trap placement, door trap placement, exit door trap placement, door movement, trap triggers, shooting, exit door use, and failed exit door use. Hidden information is only revealed when the action itself makes it visible.
 

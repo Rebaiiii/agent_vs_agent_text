@@ -6,14 +6,29 @@ from agents import LLMAgent, RandomAgent, RuleAgent
 from config import get_llm_config
 from env import AgentVsAgentEnv
 from llm_client import make_openai_client
+from memory import (
+    create_match_summary,
+    load_strategy_memory,
+    new_match_memory,
+    save_strategy_memory,
+    strategy_notes,
+    update_match_memory,
+    update_strategy_memory,
+)
 
 
-def run_match(agent_white, agent_black, render=False, max_steps=500):
+def run_match(agent_white, agent_black, render=False, max_steps=500, strategy_memory_file="strategy_memory.json"):
     env = AgentVsAgentEnv(max_steps=max_steps)
     agents = {
         "white": agent_white,
         "black": agent_black,
     }
+    for agent in agents.values():
+        agent.reset_match_memory()
+    match_memory = new_match_memory({
+        "white": _agent_type_name(agent_white),
+        "black": _agent_type_name(agent_black),
+    })
 
     observations = env.reset()
     done = False
@@ -56,6 +71,7 @@ def run_match(agent_white, agent_black, render=False, max_steps=500):
             agent_info = info["agent_infos"][agent]
             agents[agent].observe_result(observations[agent], actions[agent], rewards[agent], agent_info)
             _update_metrics(metrics, agent_info)
+        update_match_memory(match_memory, info)
         observations = next_observations
 
         if render:
@@ -63,14 +79,20 @@ def run_match(agent_white, agent_black, render=False, max_steps=500):
             env.render()
             print()
 
+    match_summary = create_match_summary(match_memory, env.winner, env.current_step)
+    strategy_memory = load_strategy_memory(strategy_memory_file)
+    strategy_memory = update_strategy_memory(strategy_memory, match_summary)
+    save_strategy_memory(strategy_memory, strategy_memory_file)
+
     return {
         "winner": env.winner,
         "steps": env.current_step,
         "metrics": metrics,
+        "match_summary": match_summary,
     }
 
 
-def evaluate(agent_white_factory, agent_black_factory, n_games=100, max_steps=500):
+def evaluate(agent_white_factory, agent_black_factory, n_games=100, max_steps=500, strategy_memory_file="strategy_memory.json"):
     white_wins = 0
     black_wins = 0
     draws = 0
@@ -101,7 +123,12 @@ def evaluate(agent_white_factory, agent_black_factory, n_games=100, max_steps=50
     }
 
     for _ in range(n_games):
-        result = run_match(agent_white_factory(), agent_black_factory(), max_steps=max_steps)
+        result = run_match(
+            agent_white_factory(),
+            agent_black_factory(),
+            max_steps=max_steps,
+            strategy_memory_file=strategy_memory_file,
+        )
         total_steps += result["steps"]
         for key, value in result["metrics"].items():
             totals[key] += value
@@ -221,20 +248,43 @@ def _success_rate(triggered, placed):
     return triggered / placed
 
 
-def print_matchup(title, white_factory, black_factory, max_steps):
+def _agent_type_name(agent):
+    class_name = agent.__class__.__name__
+    if class_name.endswith("Agent"):
+        class_name = class_name[:-5]
+    return class_name.lower()
+
+
+def print_matchup(title, white_factory, black_factory, max_steps, strategy_memory_file):
     print("=" * 60)
     print(title)
     print("=" * 60)
-    evaluate(white_factory, black_factory, max_steps=max_steps)
+    evaluate(white_factory, black_factory, max_steps=max_steps, strategy_memory_file=strategy_memory_file)
     print()
 
 
-def print_matchup_with_games(title, white_factory, black_factory, n_games, max_steps):
+def print_matchup_with_games(title, white_factory, black_factory, n_games, max_steps, strategy_memory_file):
     print("=" * 60)
     print(title)
     print("=" * 60)
-    evaluate(white_factory, black_factory, n_games=n_games, max_steps=max_steps)
+    evaluate(
+        white_factory,
+        black_factory,
+        n_games=n_games,
+        max_steps=max_steps,
+        strategy_memory_file=strategy_memory_file,
+    )
     print()
+
+
+def make_llm_agent(name, llm_config, strategy_memory_file):
+    current_strategy_memory = load_strategy_memory(strategy_memory_file)
+    return LLMAgent(
+        name,
+        client_func=make_openai_client(llm_config),
+        llm_config=llm_config,
+        strategy_memory_notes=strategy_notes(current_strategy_memory),
+    )
 
 
 def main():
@@ -249,40 +299,46 @@ def main():
         lambda: RandomAgent("white"),
         lambda: RandomAgent("black"),
         max_steps=max_steps,
+        strategy_memory_file=args.strategy_memory_file,
     )
     print_matchup(
         "RuleAgent vs RandomAgent",
         lambda: RuleAgent("white"),
         lambda: RandomAgent("black"),
         max_steps=max_steps,
+        strategy_memory_file=args.strategy_memory_file,
     )
     print_matchup(
         "RandomAgent vs RuleAgent",
         lambda: RandomAgent("white"),
         lambda: RuleAgent("black"),
         max_steps=max_steps,
+        strategy_memory_file=args.strategy_memory_file,
     )
     print_matchup(
         "RuleAgent vs RuleAgent",
         lambda: RuleAgent("white"),
         lambda: RuleAgent("black"),
         max_steps=max_steps,
+        strategy_memory_file=args.strategy_memory_file,
     )
 
     if evaluate_llm:
         print_matchup_with_games(
             "LLMAgent vs RuleAgent",
-            lambda: LLMAgent("white", client_func=make_openai_client(llm_config), llm_config=llm_config),
+            lambda: make_llm_agent("white", llm_config, args.strategy_memory_file),
             lambda: RuleAgent("black"),
             n_games=llm_eval_games,
             max_steps=max_steps,
+            strategy_memory_file=args.strategy_memory_file,
         )
         print_matchup_with_games(
             "RuleAgent vs LLMAgent",
             lambda: RuleAgent("white"),
-            lambda: LLMAgent("black", client_func=make_openai_client(llm_config), llm_config=llm_config),
+            lambda: make_llm_agent("black", llm_config, args.strategy_memory_file),
             n_games=llm_eval_games,
             max_steps=max_steps,
+            strategy_memory_file=args.strategy_memory_file,
         )
     else:
         print("LLM evaluation disabled. Use `python3 evaluate.py --llm --llm-games 5` to include LLMAgent matchups.")
@@ -306,6 +362,11 @@ def parse_args():
         type=int,
         default=500,
         help="Maximum steps per game before draw.",
+    )
+    parser.add_argument(
+        "--strategy-memory-file",
+        default="strategy_memory.json",
+        help="Path to read and update persistent strategy memory.",
     )
     return parser.parse_args()
 

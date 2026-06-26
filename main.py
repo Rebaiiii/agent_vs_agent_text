@@ -6,6 +6,15 @@ from pathlib import Path
 from agents import LLMAgent, RandomAgent, RuleAgent
 from env import AgentVsAgentEnv
 from llm_client import make_openai_client
+from memory import (
+    create_match_summary,
+    load_strategy_memory,
+    new_match_memory,
+    save_strategy_memory,
+    strategy_notes,
+    update_match_memory,
+    update_strategy_memory,
+)
 
 
 AGENT_TYPES = ("random", "rule", "llm")
@@ -14,13 +23,22 @@ AGENT_TYPES = ("random", "rule", "llm")
 def main():
     args = parse_args()
     env = AgentVsAgentEnv(max_steps=args.max_steps)
-    agents = {
-        "white": make_agent("white", args.white),
-        "black": make_agent("black", args.black),
+    strategy_memory = load_strategy_memory(args.strategy_memory_file)
+    long_term_notes = strategy_notes(strategy_memory)
+    agent_types = {
+        "white": args.white,
+        "black": args.black,
     }
+    agents = {
+        "white": make_agent("white", args.white, long_term_notes),
+        "black": make_agent("black", args.black, long_term_notes),
+    }
+    for agent in agents.values():
+        agent.reset_match_memory()
 
     log_lines = []
     observations = env.reset()
+    match_memory = new_match_memory(agent_types)
     write_line(log_lines, f"Match: white={args.white} black={args.black} max_steps={args.max_steps}")
     write_line(log_lines, "Initial grid:")
     write_line(log_lines, env.render_to_string())
@@ -37,6 +55,7 @@ def main():
         for agent in ("white", "black"):
             agents[agent].observe_result(observations[agent], actions[agent], rewards[agent], info["agent_infos"][agent])
             update_death_stats(death_stats, info["agent_infos"][agent])
+        update_match_memory(match_memory, info)
         observations = next_observations
 
         write_line(log_lines, f"Step {env.current_step}")
@@ -69,7 +88,14 @@ def main():
         write_line(log_lines, "")
 
     winner = env.winner if env.winner is not None else "No winner"
+    match_summary = create_match_summary(match_memory, env.winner, env.current_step)
+    strategy_memory = update_strategy_memory(strategy_memory, match_summary)
+    save_strategy_memory(strategy_memory, args.strategy_memory_file)
+
     write_line(log_lines, f"Winner: {winner}")
+    write_line(log_lines, "")
+    write_line(log_lines, "Match summary:")
+    write_line(log_lines, json_dumps(match_summary))
     write_line(log_lines, "")
     write_line(log_lines, "Death summary:")
     for agent in ("white", "black"):
@@ -82,15 +108,16 @@ def main():
         write_line(log_lines, f"{agent} timeout skipped steps: {death_stats[agent]['timeout_skips']}")
     write_log(args.log_file, log_lines)
     print(f"Log written to {args.log_file}")
+    print(f"Strategy memory written to {args.strategy_memory_file}")
 
 
-def make_agent(name, agent_type):
+def make_agent(name, agent_type, long_term_notes=""):
     if agent_type == "random":
         return RandomAgent(name)
     if agent_type == "rule":
         return RuleAgent(name)
     if agent_type == "llm":
-        return LLMAgent(name, client_func=make_openai_client())
+        return LLMAgent(name, client_func=make_openai_client(), strategy_memory_notes=long_term_notes)
     raise ValueError(f"Unknown agent type: {agent_type}")
 
 
@@ -103,6 +130,12 @@ def write_log(path, log_lines):
     log_path = Path(path)
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text("\n".join(log_lines) + "\n")
+
+
+def json_dumps(value):
+    import json
+
+    return json.dumps(value, indent=2)
 
 
 def new_death_stats():
@@ -150,6 +183,11 @@ def parse_args():
     parser.add_argument("--black", choices=AGENT_TYPES, default="rule", help="Agent type for black.")
     parser.add_argument("--max-steps", type=int, default=500, help="Maximum steps before draw.")
     parser.add_argument("--log-file", default="logs/main_match.log", help="Path to write the full step log.")
+    parser.add_argument(
+        "--strategy-memory-file",
+        default="strategy_memory.json",
+        help="Path to read and update persistent strategy memory.",
+    )
     return parser.parse_args()
 
 

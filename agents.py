@@ -14,9 +14,13 @@ def position_key(position):
 class BaseAgent:
     def __init__(self, name):
         self.name = name
-        self.memory = self._new_memory()
+        self.reset_match_memory()
 
-    def _new_memory(self):
+    def reset_match_memory(self):
+        self.match_memory = self._new_match_memory()
+        self.memory = self.match_memory
+
+    def _new_match_memory(self):
         return {
             "visited_rooms": [],
             "searched_objects": {},
@@ -474,10 +478,11 @@ class RuleAgent(BaseAgent):
 
 
 class LLMAgent(BaseAgent):
-    def __init__(self, name, client_func=None, llm_config=None):
+    def __init__(self, name, client_func=None, llm_config=None, strategy_memory_notes=""):
         super().__init__(name)
         self.client_func = client_func
         self.llm_config = llm_config or get_llm_config()
+        self.strategy_memory_notes = strategy_memory_notes
 
     def act(self, observation):
         if observation.get("is_dead"):
@@ -509,6 +514,7 @@ class LLMAgent(BaseAgent):
         prompt_data = {
             "current_observation": observation,
             "memory_summary": self.memory_summary(),
+            "strategy_memory_notes": self.strategy_memory_notes,
             "recent_action_history": self.recent_action_history(),
             "available_actions": observation["available_actions"],
             "remaining_turns": observation["turns_left"],
@@ -528,6 +534,7 @@ class LLMAgent(BaseAgent):
             "If you saw the opponent find an item, assume that item is gone.\n"
             "Use your memory to avoid repeated searches, remember empty objects, "
             "track suspected enemy traps, and plan efficient movement through doors.\n"
+            f"Long-term strategy notes from previous games: {self.strategy_memory_notes or 'None yet.'}\n"
             "Choose only one action from available_actions.\n"
             "Return only JSON in this exact shape:\n"
             '{"action": "search_desk", "reason": "The desk in this room has not been searched yet."}\n\n'
